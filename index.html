@@ -1064,11 +1064,11 @@ body.mode-keygen .view-hero,body.mode-keygen .view-vault,body.mode-keygen .nav{d
 <div class="view-keygen" id="keygenView">
   <div class="kg-wrap">
     <h2>密码工具</h2>
-    <p class="kg-sub">给任意一个资源加密码。整个过程三步，做完重新发布就生效。</p>
+    <p class="kg-sub">给任意一个资源加密码。网址本身会被加密成密文，源代码里看不到真实地址。</p>
 
     <div class="kg-steps">
-      <div class="kg-step"><b>STEP 01</b><span>在这里输入密码，生成一段代码</span></div>
-      <div class="kg-step"><b>STEP 02</b><span>把代码粘到 nexus.html 里那个项目那一行</span></div>
+      <div class="kg-step"><b>STEP 01</b><span>填网址和密码，生成一段加密代码</span></div>
+      <div class="kg-step"><b>STEP 02</b><span>用它替换 nexus.html 里那个项目的 url 段</span></div>
       <div class="kg-step"><b>STEP 03</b><span>保存文件，双击桌面「一键发布」</span></div>
     </div>
 
@@ -1077,14 +1077,19 @@ body.mode-keygen .view-hero,body.mode-keygen .view-vault,body.mode-keygen .nav{d
       <input type="text" id="kgName" placeholder="例如：少数派" autocomplete="off">
     </div>
     <div class="kg-field">
-      <label>密码（建议 8 位以上，字母 + 数字 + 符号）</label>
-      <input type="text" id="kgPwd" placeholder="例如：Nexus@2026" autocomplete="off">
+      <label>要加密的网址（必填，必须带 https://）</label>
+      <input type="text" id="kgUrl" placeholder="例如：https://example.com" autocomplete="off">
     </div>
-    <button class="kg-btn" id="kgBtn">生成配置</button>
+    <div class="kg-field">
+      <label>密码（至少 8 位，强烈建议 12 位以上，字母 + 数字 + 符号）</label>
+      <input type="text" id="kgPwd" placeholder="例如：Nexus@2026 Garden" autocomplete="off">
+    </div>
+    <button class="kg-btn" id="kgBtn">生成加密配置</button>
+    <div id="kgWarn" style="display:none;margin-top:12px;font-size:13px;line-height:1.7;color:#fbbf24"></div>
 
     <div class="kg-out" id="kgOut">
       <div class="kg-block">
-        <div class="kg-label">要粘贴的代码 <button class="kg-copy" id="kgCopy1" type="button">复制</button></div>
+        <div class="kg-label">要粘贴的代码（已含加密网址） <button class="kg-copy" id="kgCopy1" type="button">复制</button></div>
         <pre id="kgCode"></pre>
       </div>
       <div class="kg-block">
@@ -1095,9 +1100,16 @@ body.mode-keygen .view-hero,body.mode-keygen .view-vault,body.mode-keygen .nav{d
         <div class="kg-label">接下来做这 4 件事</div>
         <ul class="kg-todo">
           <li>打开 <code>nexus.html</code>，按 <code>Ctrl + F</code> 搜这个项目的名字</li>
-          <li>它如果已经有 <code>lock:{...}</code> 就整段选中删掉；没有就在 <code>icon:'x'</code> 后面加一个英文逗号</li>
-          <li>把上面第一段代码粘进去，按 <code>Ctrl + S</code> 保存</li>
+          <li>这一行如果已经有旧的 <code>lock:{...}</code>，把它连同前面那个英文逗号一起删掉</li>
+          <li>选中 <code>url:'https://…'</code> 这一整段，用上面第一段代码替换它，按 <code>Ctrl + S</code> 保存</li>
           <li>双击桌面的「一键发布」，等窗口显示成功就行</li>
+        </ul>
+      </div>
+      <div class="kg-block">
+        <div class="kg-label">两件必须知道的事</div>
+        <ul class="kg-todo">
+          <li><b>密码不会被保存在任何地方。</b>忘了密码，那个网址就再也解不出来了，只能重新生成一次。请把密码记在密码管理器里。</li>
+          <li>解锁成功的人能看到并转发这个网址。加密防的是"随便翻源码就能看到"，不是防已经拿到密码的人。</li>
         </ul>
       </div>
     </div>
@@ -1138,6 +1150,11 @@ body.mode-keygen .view-hero,body.mode-keygen .view-vault,body.mode-keygen .nav{d
      desc  一句话介绍（建议 20 字内）
      tag   右下角小标签（英文/中文都行）
      icon  左侧图标方块里的一个字或字母
+
+     可选第 6 项 lock —— 加密这个项目：
+     去 #keygen 页面填网址和密码，把它生成的
+     url:'', lock:{ v:2, ... } 整段替换掉原来的 url:'https://…'。
+     这样真实网址只以密文形式存在，源码里看不到。
      ========================================================== */
   var CATEGORIES = [
     {
@@ -1343,12 +1360,18 @@ body.mode-keygen .view-hero,body.mode-keygen .view-vault,body.mode-keygen .nav{d
   }
 
   /* ==========================================================
-     加密系统：SHA-256 加盐 + 300 轮迭代，密码不明文存储
+     加密系统（两种格式并存，都能用）
+     v2 新版：网址本身用 AES-GCM 加密，密钥由密码经 PBKDF2 推导。
+              文件里只有密文，查看源代码看不到真实网址。
+              数据形如 lock:{ v:2, iter, salt, iv, ct }，且 url:''
+     v1 旧版：明文 url + 加盐 300 轮 SHA-256 校验，仅拦住点击。
+              数据形如 lock:{ salt, hash }。保留以兼容老数据。
      ========================================================== */
   var LOCK_ROUNDS = 300;
   var lockState = null;
   var lockFail = 0;
   var lockUntil = 0;
+  var lockBusy = false;
 
   function sha256(ascii) {
     function rightRotate(value, amount) { return (value>>>amount) | (value<<(32 - amount)); }
@@ -1421,6 +1444,71 @@ body.mode-keygen .view-hero,body.mode-keygen .view-vault,body.mode-keygen .nav{d
     return s;
   }
 
+  /* ---------- v2：PBKDF2 派生密钥 + AES-GCM 加密网址 ---------- */
+  var KDF_ITER = 600000;   /* PBKDF2-SHA256 迭代次数，越大越难暴力破解 */
+
+  function hasWebCrypto() {
+    return !!(window.crypto && window.crypto.subtle && window.crypto.getRandomValues &&
+              window.TextEncoder && window.TextDecoder);
+  }
+  function hexToBytes(hex) {
+    var a = new Uint8Array(hex.length / 2);
+    for (var i = 0; i < a.length; i++) { a[i] = parseInt(hex.substr(i * 2, 2), 16); }
+    return a;
+  }
+  function bytesToHex(buf) {
+    var a = new Uint8Array(buf), s = '';
+    for (var i = 0; i < a.length; i++) { s += (a[i] < 16 ? '0' : '') + a[i].toString(16); }
+    return s;
+  }
+  function randomHex(nBytes) {
+    var a = new Uint8Array(nBytes);
+    window.crypto.getRandomValues(a);
+    return bytesToHex(a);
+  }
+  function bytesToB64(buf) {
+    var a = new Uint8Array(buf), s = '';
+    for (var i = 0; i < a.length; i++) { s += String.fromCharCode(a[i]); }
+    return btoa(s);
+  }
+  function b64ToBytes(b64) {
+    var s = atob(b64), a = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) { a[i] = s.charCodeAt(i); }
+    return a;
+  }
+  function deriveKey(pwd, saltHex, iter) {
+    return window.crypto.subtle.importKey(
+      'raw', new TextEncoder().encode(pwd), 'PBKDF2', false, ['deriveKey']
+    ).then(function(base){
+      return window.crypto.subtle.deriveKey(
+        { name: 'PBKDF2', salt: hexToBytes(saltHex), iterations: iter, hash: 'SHA-256' },
+        base,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+      );
+    });
+  }
+  function encryptUrl(url, pwd) {
+    var salt = randomHex(16), iv = randomHex(12);
+    return deriveKey(pwd, salt, KDF_ITER).then(function(key){
+      return window.crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: hexToBytes(iv) }, key, new TextEncoder().encode(url)
+      );
+    }).then(function(ct){
+      return { v: 2, iter: KDF_ITER, salt: salt, iv: iv, ct: bytesToB64(ct) };
+    });
+  }
+  function decryptUrl(lk, pwd) {
+    return deriveKey(pwd, lk.salt, lk.iter || KDF_ITER).then(function(key){
+      return window.crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: hexToBytes(lk.iv) }, key, b64ToBytes(lk.ct)
+      );
+    }).then(function(buf){
+      return new TextDecoder().decode(buf);
+    });
+  }
+
   var lockModal = document.getElementById('lockModal');
   var lockInput = document.getElementById('lockInput');
   var lockErr = document.getElementById('lockErr');
@@ -1431,10 +1519,12 @@ body.mode-keygen .view-hero,body.mode-keygen .view-vault,body.mode-keygen .nav{d
     var item = cat.items[ii];
     if (!item || !item.lock) return;
     lockState = { ci: ci, ii: ii };
+    lockBusy = false;
     document.getElementById('lockTitle').textContent = item.name;
     document.getElementById('lockTip').textContent = '这个项目已加密，输入密码才能打开';
     lockErr.textContent = '';
     lockInput.value = '';
+    lockInput.style.display = '';
     lockModal.classList.add('on');
     lockModal.setAttribute('aria-hidden', 'false');
     setTimeout(function(){ lockInput.focus(); }, 90);
@@ -1446,33 +1536,80 @@ body.mode-keygen .view-hero,body.mode-keygen .view-vault,body.mode-keygen .nav{d
     lockState = null;
   }
 
+  function lockFailHit() {
+    lockFail++;
+    if (lockFail >= 5) {
+      lockUntil = Date.now() + 60000;
+      lockErr.textContent = '错误 5 次，已锁定 60 秒';
+    } else {
+      lockErr.textContent = '密码不对（' + lockFail + ' / 5）';
+    }
+    lockInput.value = '';
+    lockInput.focus();
+  }
+
+  /* 解锁成功：仍然在新标签打开，并保持 opener 隔离 */
+  function lockSuccess(url) {
+    lockFail = 0;
+    closeLock();
+    var w = window.open(url, '_blank');
+    if (w) { try { w.opener = null; } catch (e) {} return; }
+    /* 少数浏览器会拦截异步弹出的新窗口，这里给一个可点击入口兜底 */
+    var tip = document.getElementById('lockTip');
+    tip.textContent = '浏览器拦截了新窗口，';
+    var a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = '点这里进入 →';
+    a.style.color = '#5eead4';
+    tip.appendChild(a);
+    document.getElementById('lockTitle').textContent = '密码正确';
+    lockErr.textContent = '';
+    lockInput.value = '';
+    lockInput.style.display = 'none';
+    lockState = null;
+    lockModal.classList.add('on');
+    lockModal.setAttribute('aria-hidden', 'false');
+  }
+
   function submitLock() {
-    if (!lockState) return;
+    if (!lockState || lockBusy) return;
     var now = Date.now();
     if (now < lockUntil) {
       lockErr.textContent = '尝试太频繁，请 ' + Math.ceil((lockUntil - now) / 1000) + ' 秒后再试';
       return;
     }
     var pwd = lockInput.value;
-    var item = CATEGORIES[lockState.ci].items[lockState.ii];
-    var ok = false;
-    try { ok = (lockHash(item.lock.salt, pwd) === item.lock.hash); } catch (err) { ok = false; }
+    var st = lockState;
+    var item = CATEGORIES[st.ci].items[st.ii];
+    var lk = item.lock;
 
-    if (ok) {
-      lockFail = 0;
-      closeLock();
-      window.open(item.url, '_blank', 'noopener');
-    } else {
-      lockFail++;
-      if (lockFail >= 5) {
-        lockUntil = Date.now() + 60000;
-        lockErr.textContent = '错误 5 次，已锁定 60 秒';
-      } else {
-        lockErr.textContent = '密码不对（' + lockFail + ' / 5）';
-      }
-      lockInput.value = '';
-      lockInput.focus();
+    /* v1 旧格式：明文网址 + 加盐哈希校验（老数据继续可用） */
+    if (!lk.ct) {
+      var ok = false;
+      try { ok = (lockHash(lk.salt, pwd) === lk.hash); } catch (err) { ok = false; }
+      if (ok) { lockSuccess(item.url); } else { lockFailHit(); }
+      return;
     }
+
+    /* v2 新格式：网址是密文，密码正确才解得出来 */
+    if (!hasWebCrypto()) {
+      lockErr.textContent = '当前环境不支持解密，请用 https 网址打开本站';
+      return;
+    }
+    lockBusy = true;
+    lockErr.textContent = '正在解密…';
+    decryptUrl(lk, pwd).then(function(url){
+      lockBusy = false;
+      if (lockState !== st) return;            /* 期间已取消或换了项目，忽略 */
+      if (!/^https?:\/\//i.test(url)) { lockFailHit(); return; }
+      lockSuccess(url);
+    }, function(){
+      lockBusy = false;
+      if (lockState !== st) return;
+      lockFailHit();
+    });
   }
 
   /* 点加密卡片 → 弹密码框，不直接跳转 */
@@ -1496,6 +1633,8 @@ body.mode-keygen .view-hero,body.mode-keygen .view-vault,body.mode-keygen .nav{d
   var kgBtn = document.getElementById('kgBtn');
   var kgPwd = document.getElementById('kgPwd');
   var kgName = document.getElementById('kgName');
+  var kgUrl = document.getElementById('kgUrl');
+  var kgWarn = document.getElementById('kgWarn');
   var kgOut = document.getElementById('kgOut');
   var kgCode = document.getElementById('kgCode');
   var kgFull = document.getElementById('kgFull');
@@ -1527,29 +1666,63 @@ body.mode-keygen .view-hero,body.mode-keygen .view-vault,body.mode-keygen .nav{d
     }
   }
 
+  function kgFail(msg) {
+    kgCode.textContent = msg;
+    kgFull.textContent = '';
+    kgWarn.style.display = 'none';
+    kgOut.classList.add('on');
+  }
+
   function genKey() {
+    if (kgBtn.disabled) return;
     var pwd = kgPwd.value;
+    var url = (kgUrl.value || '').replace(/^\s+|\s+$/g, '');
+
+    if (!url) { kgUrl.focus(); return; }
+    if (!/^https?:\/\/[^\s'"]+$/i.test(url)) {
+      kgFail('网址要以 https:// 开头，且不能含空格或引号。例如 https://example.com');
+      return;
+    }
     if (!pwd) { kgPwd.focus(); return; }
     if (/[^\x20-\x7e]/.test(pwd)) {
-      kgCode.textContent = '密码只能用英文字母、数字和符号，不能有中文。';
-      kgFull.textContent = '';
-      kgOut.classList.add('on');
+      kgFail('密码只能用英文字母、数字和符号，不能有中文。');
       return;
     }
-    if (pwd.length < 4) {
-      kgCode.textContent = '密码太短了，至少 4 位，建议 8 位以上。';
-      kgFull.textContent = '';
-      kgOut.classList.add('on');
+    if (pwd.length < 8) {
+      kgFail('密码至少 8 位，建议 12 位以上（字母 + 数字 + 符号）。');
       return;
     }
-    var salt = randomSalt(16);
-    var hash = lockHash(salt, pwd);
-    var code = "lock:{ salt:'" + salt + "', hash:'" + hash + "' }";
-    kgCode.textContent = code;
-    var nm = (kgName.value || '').replace(/^\s+|\s+$/g, '') || '项目名字';
-    kgFull.textContent =
-      "{ name:'" + nm + "', url:'https://这里填网址', desc:'一句话介绍', tag:'Tag', icon:'字', " + code + " },";
-    kgOut.classList.add('on');
+    if (!hasWebCrypto()) {
+      kgFail('当前环境不支持加密。请双击本地 nexus.html 打开，或用 https 网址访问本站。');
+      return;
+    }
+
+    kgBtn.disabled = true;
+    var oldLabel = kgBtn.textContent;
+    kgBtn.textContent = '加密中…';
+    kgWarn.style.display = 'none';
+
+    encryptUrl(url, pwd).then(function(lk){
+      var lockCode = "lock:{ v:2, iter:" + lk.iter + ", salt:'" + lk.salt +
+                     "', iv:'" + lk.iv + "', ct:'" + lk.ct + "' }";
+      kgCode.textContent = "url:'', " + lockCode;
+      var nm = (kgName.value || '').replace(/^\s+|\s+$/g, '') || '项目名字';
+      kgFull.textContent =
+        "{ name:'" + nm + "', url:'', desc:'一句话介绍', tag:'Tag', icon:'字', " + lockCode + " },";
+      kgOut.classList.add('on');
+
+      var warn = '';
+      if (pwd.length < 12) { warn += '这个密码只有 ' + pwd.length + ' 位，偏短。拿到密文的人可以离线穷举，建议改成 12 位以上。'; }
+      if (!/[0-9]/.test(pwd) || !/[a-zA-Z]/.test(pwd) || !/[^a-zA-Z0-9]/.test(pwd)) {
+        warn += (warn ? '<br>' : '') + '建议同时包含字母、数字和符号，别和其他账号用同一个密码。';
+      }
+      if (warn) { kgWarn.innerHTML = warn; kgWarn.style.display = 'block'; }
+    }, function(){
+      kgFail('加密失败，请刷新页面重试。');
+    }).then(function(){
+      kgBtn.disabled = false;
+      kgBtn.textContent = oldLabel;
+    });
   }
 
   kgBtn.addEventListener('click', genKey);
@@ -1557,6 +1730,9 @@ body.mode-keygen .view-hero,body.mode-keygen .view-vault,body.mode-keygen .nav{d
     if (e.key === 'Enter') { e.preventDefault(); genKey(); }
   });
   kgName.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') { e.preventDefault(); kgUrl.focus(); }
+  });
+  kgUrl.addEventListener('keydown', function(e){
     if (e.key === 'Enter') { e.preventDefault(); kgPwd.focus(); }
   });
   if (kgCopy1) kgCopy1.addEventListener('click', function(){ copyText(kgCode.textContent, kgCopy1); });
